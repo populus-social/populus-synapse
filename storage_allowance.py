@@ -101,9 +101,13 @@ class StorageAllowanceModule:
     # --- Chat read-only during Sunset (#1945) -------------------------------
     # Reading, key backup and Element's export keep working: they are not
     # events or room actions. Leaving a room stays allowed. Every failure
-    # fails open, like the allowance check.
+    # fails open, like the allowance check, and is cached for the TTL like a
+    # success: a federation burst must not become one lookup (and one log
+    # line) per event (#2187).
 
     async def _restricted(self, user_id: str) -> bool:
+        if not self._api.is_mine(user_id):
+            return False  # a remote sender is never a Sunset member
         pseudonym = localpart(user_id)
         now = self._clock()
         hit = self._sunset_cache.get(pseudonym)
@@ -122,7 +126,7 @@ class StorageAllowanceModule:
                 logger.error("populus_synapse: account-service refused the chat API key (401); allowing")
             else:
                 logger.warning("populus_synapse: sunset state lookup failed, allowing: %r", e)
-            return False
+            restricted = False
         self._sunset_cache[pseudonym] = (now, restricted)
         if len(self._sunset_cache) > 1024:
             self._sunset_cache = {
